@@ -1,0 +1,106 @@
+-- (c) Stefan Luger 2013
+-- For each transition, a corresponding operation must exist.
+--
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+
+module Scenario03;
+create OUT: UML2 refining IN: UML2;
+
+-- only one model may exist per file 
+helper def: getModel(): UML2!Model =
+	UML2!Model.allInstancesFrom('INOUT').first();
+
+helper def: getTransitionsByClass(cl: UML2!Class): Sequence(UML2!Transitions) =
+	UML2!Transition.allInstancesFrom('INOUT') -> select(t | t.owner.owner.owner = cl);
+
+-- new operation constructor alternative
+rule NewOperation (oStr: String, cStr: String, owner: OclAny){
+	using {
+		o: UML2!Operation = UML2!Operation.newInstanceIn('INOUT');
+		c: UML2!Comment = UML2!Comment.newInstance();
+	}
+	do{
+		c.body <- cStr;
+		o.name <- oStr -> debug('ADD operation');
+		o.ownedComment <- Sequence{}.append(c);
+		if (owner <> OclUndefined) o.class <- owner;
+		o;	-- return operation
+	} 
+}
+
+-- new constraint constructor alternative
+rule NewOwnedRule (owner: UML2!Element, ruleName: String, exp: String, l: String) {
+	using {
+		c: UML2!Constraint = UML2!Constraint.newInstanceIn('INOUT');
+		oe: UML2!OpaqueExpression = UML2!OpaqueExpression.newInstanceIn('INOUT');
+	}
+	do {
+		oe.language <- oe.language -> append(l);
+		oe.body <- oe.body -> append(exp);
+		c.name <- ruleName -> debug('ADD ownedRule');
+		c.constrainedElement <- c.constrainedElement -> append(owner);
+		c.specification <- oe;
+		owner.ownedRule <- owner.ownedRule -> append(c);	
+		c;	-- return constraint
+	}
+}
+
+-- for each transition, look up missing operations in inheritance hierarchy
+rule Class {
+	from
+		s: UML2!Class
+	using {
+		c03Name: String = 'For each transition, a corresponding operation must exist.';
+		c03Expr: String = OclUndefined;
+		c03Elements: Sequence(UML2!Operation) = OclUndefined;
+		newOps: Sequence(UML2!Transition) = thisModule.getTransitionsByClass(s) ->
+				select(tr | not s.ownedOperation -> exists(o | o.name = tr.name));
+	}
+	to
+		t: UML2!Class (
+			-- keep class properties
+		)
+	do {
+		
+		if (not thisModule.getTransitionsByClass(s) -> select(t | not s.ownedOperation ->
+				exists(o | o.name = t.name)) -> isEmpty()) {
+			     -- add missing operations
+			for (tr in newOps) {
+				-- when there is no super class, add operation to class
+				if (not s.allOwnedElements() -> exists(g | g.
+						oclIsTypeOf(UML2!Generalization))) {
+					thisModule.NewOperation(tr.name, '', s); 
+				} 
+				-- otherwise add operation to model, in case it doesn't exist yet
+				else if (UML2!Operation -> allInstancesFrom('INOUT') -> select(o | o.
+						owner = OclUndefined and o.ownedComment -> exists(oc | oc.body =
+						c03Name)) -> isEmpty()) {
+					thisModule.NewOperation(tr.name, c03Name, OclUndefined);
+				}
+			} 
+		}
+		    -- get all operations for constraint expression
+		c03Elements <- thisModule.getTransitionsByClass(s);--s.ownedOperation ->
+				-- union(newOps);
+		-- for each operation, build constraint
+		if (c03Elements -> size() > 0) {
+			c03Expr <- 'self.inheritedMember->select(oclIsTypeOf(Operation))->union(self.'
+					+ 'ownedOperation)->exists(name=\'' + c03Elements.first().name
+					+ '\')';
+			
+			c03Elements <- c03Elements -> subSequence(2, c03Elements -> size());
+			for (o in c03Elements) {
+				c03Expr <- c03Expr.concat(' and self.' +
+						'inheritedMember->select(oclIsTypeOf(Operation))->union(self.'
+						+ 'ownedOperation)->exists(name=\'' + o.name + '\')');	
+			} -- add constraint to class
+			  if (not s.allOwnedElements() -> select(c | c.
+					oclIsTypeOf(UML2!Constraint)) -> exists(c | c.name = c03Name) and
+					s.oclIsTypeOf(UML2!Class)) {	
+				thisModule.NewOwnedRule(s, c03Name, c03Expr, 'OCL');
+			}
+		}
+	}
+}

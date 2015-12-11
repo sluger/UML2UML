@@ -1,0 +1,114 @@
+-- (c) Stefan Luger 2013
+-- Each message must be represented by an operation and inside the corresponding class
+		-- hierarchy.
+--
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+
+module Scenario01;
+create OUT: UML2 refining IN: UML2;
+
+-- helpers
+
+-- only one model may exist per file
+helper def: getModel(): UML2!Model =
+	UML2!Model.allInstancesFrom('INOUT').first();
+
+helper def: getReceiverLifelineClass(m: UML2!Message): UML2!Class =
+	UML2!Lifeline.allInstancesFrom('INOUT') -> select(l | l.coveredBy -> select(i | i.
+			oclIsTypeOf(UML2!MessageOccurrenceSpecification)) -> exists(e | e = m.
+			receiveEvent)) -> first().represents.type;
+
+helper def: getMessagesByClass(cl: UML2!Class): Sequence(UML2!Message) =
+	UML2!Message.allInstancesFrom('INOUT') -> select(m | thisModule.
+			getReceiverLifelineClass(m) = cl);
+
+-- new operation constructor alternative
+rule NewOperation (oStr: String, cStr: String, owner: OclAny){
+	using {
+		o: UML2!Operation = UML2!Operation.newInstanceIn('INOUT');
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		o.name <- oStr -> debug('ADD operation');
+		if (owner <> OclUndefined) o.class <- owner;
+		o;	-- return operation
+	} 
+}
+
+-- new constraint constructor alternative
+rule NewOwnedRule (owner: UML2!Element, ruleName: String, exp: String, l: String) {
+	using {
+		c: UML2!Constraint = UML2!Constraint.newInstanceIn('INOUT');
+		oe: UML2!OpaqueExpression = UML2!OpaqueExpression.newInstanceIn('INOUT');
+	}
+	do {
+		oe.language <- oe.language -> append(l);
+		oe.body <- oe.body -> append(exp);
+		c.name <- ruleName -> debug('ADD ownedRule');
+		c.constrainedElement <- c.constrainedElement -> append(owner);
+		c.specification <- oe;
+		owner.ownedRule <- owner.ownedRule -> append(c);	
+		c;	-- return constraint
+	}
+}
+
+-- for each message, look up missing operations in inheritance hierarchy
+rule Class {
+	from
+		s: UML2!Class (
+			s.oclIsTypeOf(UML2!Class)
+		)
+	using {
+		c01Name: String = 'For the class \'' + s.name + '\', each message must be' + '' +
+				' represented by an operation and inside the corresponding class' + '' +
+				' hierarchy.';
+		c01Expr: String = OclUndefined;
+		c01Elements: Sequence(UML2!Message) = OclUndefined;
+		newOps: Sequence(UML2!Message) = thisModule.getMessagesByClass(s) ->
+				debug('ConcurrentModificationException Fix') -> select(m | not s.
+				ownedOperation -> exists(o | o.name = m.name));
+	}
+	to
+		t: UML2!Class (
+			-- keep class properties
+		)
+	do {
+		   -- add missing operations
+		for (m in newOps) {
+				-- when there is no super class, add operation to class
+				if (not s.allOwnedElements() -> exists(g | g.
+						oclIsTypeOf(UML2!Generalization))) {
+					thisModule.NewOperation(m.name, '', s); 
+				} 
+				-- otherwise add operation to model, in case it doesn't exist yet
+				else if (UML2!Operation -> allInstancesFrom('INOUT') -> select(o | o.
+						owner = OclUndefined and o.ownedComment -> exists(oc | oc.body =
+						c01Name)) -> isEmpty()) {
+					thisModule.NewOperation(m.name, c01Name, OclUndefined);
+				}
+			} -- get all messages for constraint expression
+		  c01Elements <- thisModule.getMessagesByClass(s);
+		
+		-- for each operation, build constraint
+		if (c01Elements -> size() > 0) {
+			c01Expr <- 'self.inheritedMember->select(oclIsTypeOf(Operation))->union(self.'
+					+ 'ownedOperation)->exists(name=\'' + c01Elements.first().name +
+					'\')';
+			
+			c01Elements <- c01Elements -> subSequence(2, c01Elements -> size());
+			for (o in c01Elements) {
+				c01Expr <- c01Expr.concat(' and self.' +
+						'inheritedMember->select(oclIsTypeOf(Operation))->union(self.'
+						+ 'ownedOperation)->exists(name=\'' + o.name + '\')');	
+			} -- add constraint to class
+			  if (not s.allOwnedElements() -> select(c | c.
+					oclIsTypeOf(UML2!Constraint)) -> exists(c | c.name = c01Name) and
+					s.oclIsTypeOf(UML2!Class)) {	
+				thisModule.NewOwnedRule(s, c01Name, c01Expr, 'OCL');
+			}
+		}
+	}
+}

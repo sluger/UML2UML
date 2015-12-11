@@ -1,0 +1,89 @@
+-- (c) Stefan Luger 2013
+-- Statechart diagram must have an initial pseudostate.
+--
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+module Scenario07;
+create OUT: UML2 refining IN: UML2;
+
+-- only one model may exist per file
+helper def: getModel(): UML2!Model =
+	UML2!Model.allInstancesFrom('INOUT').first();
+
+-- new comment constructor alternative
+rule NewComment (owner : UML2!Element, cStr: String){
+	using {
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		owner.ownedComment <- Sequence{}.append(c);
+		c;	-- return operation
+	} 
+}
+
+-- new constraint constructor alternative
+rule NewOwnedRule (owner: UML2!Element, ruleName: String, exp: String, l: String) {
+	using {
+		c: UML2!Constraint = UML2!Constraint.newInstanceIn('INOUT');
+		oe: UML2!OpaqueExpression = UML2!OpaqueExpression.newInstanceIn('INOUT');
+	}
+	do {
+		oe.language <- oe.language -> append(l);
+		oe.body <- oe.body -> append(exp);
+		c.name <- ruleName -> debug('ADD ownedRule');
+		c.constrainedElement <- c.constrainedElement -> append(owner);
+		c.specification <- oe;
+		owner.ownedRule <- owner.ownedRule -> append(c);	
+		c;	-- return constraint
+	}
+}
+
+-- new pseudostate constructor alternative
+rule NewPseudostate (psStr: String, cStr: String, owner: UML2!Region){
+	using {
+		ps: UML2!Pseudostate = UML2!Pseudostate.newInstanceIn('INOUT');
+		c1: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+		c2: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+		t: UML2!Transition = UML2!Transition.newInstanceIn('INOUT');
+	}
+	do{
+		c1.body <- psStr;
+		c2.body <- psStr;
+		ps->debug('ps');
+		ps.name <- '' -> concat(psStr) -> debug('ADD message');
+		ps.ownedComment <- Sequence{}.append(c1)->debug('new comment');
+		ps.container <- owner;
+		t.container <- owner;
+		t.name <- psStr;
+		t.source <- ps;
+		t.ownedComment <- Sequence{}.append(c2);
+		ps;	-- return pseudostate
+	} 
+}
+
+rule Region {
+	from
+		s: UML2!Region (not s.oclIsTypeOf(UML2!Interaction) and not s.oclIsTypeOf(UML2!Class))
+	using {
+		c07Name: String = 'Statechart region diagram must have an initial pseudostate.';
+		c07Expr: String = 'self.ownedMember->select(oclIsTypeOf(Region)).ownedMember->exists(oclIsTypeOf(Pseudostate))';
+	}
+	to
+		t: UML2!Region (
+			-- keep region properties
+		)
+	do {
+		-- add pseudostate
+		if (not s.allOwnedElements()->exists(is | is.oclIsKindOf(UML2!Pseudostate))) {
+			thisModule.NewPseudostate(c07Name, c07Expr, s);
+		}
+		
+		-- add constraint
+		if (not s.allOwnedElements() -> select(c | c.oclIsTypeOf(UML2!Constraint)) -> exists(c | c.name = c07Name) and s.oclIsTypeOf(UML2!Region)) {	
+			thisModule.NewOwnedRule(s, c07Name, c07Expr, 'OCL');
+		}
+	}
+}
+

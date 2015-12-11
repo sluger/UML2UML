@@ -1,0 +1,135 @@
+-- (c) Stefan Luger 2013
+-- For each association, the corresponding message must exist.
+--
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+
+module Scenario08;
+create OUT: UML2 refining IN: UML2;
+
+-- only one model may exist per file
+helper def: getModel(): UML2!Model =
+	UML2!Model.allInstancesFrom('INOUT').first();
+
+-- only one sequence diagram per model may exist
+helper def: getInteraction(): UML2!Interaction =
+	UML2!Interaction.allInstancesFrom('INOUT') -> at(1);
+
+-- new comment constructor alternative
+rule NewComment (owner: UML2!Element, cStr: String){
+	using {
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		owner.ownedComment <- Sequence{}.append(c);
+		c;	-- return comment
+	} 
+}
+
+-- new constraint constructor alternative
+rule NewOwnedRule (owner: UML2!Element, ruleName: String, exp: String, l: String) {
+	using {
+		c: UML2!Constraint = UML2!Constraint.newInstanceIn('INOUT');
+		oe: UML2!OpaqueExpression = UML2!OpaqueExpression.newInstanceIn('INOUT');
+	}
+	do {
+		oe.language <- oe.language -> append(l);
+		oe.body <- oe.body -> append(exp);
+		c.name <- ruleName -> debug('ADD ownedRule');
+		c.constrainedElement <- c.constrainedElement -> append(owner);
+		c.specification <- oe;
+		owner.ownedRule <- owner.ownedRule -> append(c);	
+		c;	-- return constraint
+	}
+}
+
+-- new message constructor alternative
+rule NewMessage (mStr: String, cStr: String, rcv: UML2!Lifeline, snd: UML2!Lifeline,
+		owner: UML2!Interaction){
+	using {
+		m: UML2!Message = UML2!Message.newInstanceIn('INOUT');
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		m.name <- '' -> concat(mStr) -> debug('ADD message');
+		   --m.messageSort <- 'asynchCall';
+		m.ownedComment <- Sequence{}.append(c);
+		m.interaction <- owner;
+		m;	-- return message
+	} 
+}
+
+-- new messageoccurrencespecification constructor alternative
+rule NewMessageOccurrenceSpecification (mStr: String, ll: UML2!Lifeline, m: UML2!Message,
+		owner: UML2!Interaction) {
+	using {
+		mos: UML2!MessageOccurrenceSpecification = UML2!MessageOccurrenceSpecification.
+				newInstanceIn('INOUT');
+	}
+	do{
+		mos.name <- mStr -> debug('ADD message occurrence specification');
+		mos.covered <- Sequence{ll};
+		mos.message <- m;
+		mos.enclosingInteraction <- owner;
+		mos;	-- return mos	
+	} 
+}
+
+rule Association {
+	from
+		s: UML2!Association (
+			not s.allOwnedElements() -> select(c | c.oclIsTypeOf(UML2!Constraint)) ->
+					exists(c | c.name = 'For the association ' + s.name + ', a message' +
+					' must exist.')
+		)
+	using {
+		c08Name: String = 'For the association ' + s.name + ', the corresponding message'
+				+ ' must exist.';
+		c08Expr: String = 'let snd: Lifeline = Lifeline.allInstances()->select(represents.'
+				+ '.type = self.memberEnd->at(1).type) in ' + 'let rcv:' + ''
+				+ ' Lifeline = Lifeline.allInstances()->select(l | l.represents.type'
+				+ ' = self.memberEnd->at(2).type) in ' + 'not Message.' +
+				'allInstances()->exists(receiveEvent = rcv)';
+		c08Snd: Sequence(UML2!Lifeline) = UML2!Lifeline.allInstancesFrom('INOUT') ->
+				select(l | l.represents.type = s.memberEnd -> at(1).type);
+		c08Rcv: Sequence(UML2!Lifeline) = UML2!Lifeline.allInstancesFrom('INOUT') ->
+				select(l | l.represents.type = s.memberEnd -> at(2).type);
+		c08MsgName: String = s.name;
+		c08SndEvent: UML2!MessageOccurrenceSpecification = OclUndefined;
+		c08RcvEvent: UML2!MessageOccurrenceSpecification = OclUndefined;
+		c08Msg: UML2!Message = OclUndefined;
+	}
+	to
+		t: UML2!Association (
+			-- keep class properties
+			
+			-- add constraint
+			ownedRule <- s.ownedRule -> append(thisModule.NewOwnedRule(s, c08Name,
+					c08Expr, 'OCL'))
+		)
+	do {
+		-- a lifeline for association member end must exist
+		if (not c08Snd -> isEmpty() and not c08Rcv -> isEmpty()) {	
+				-- if no message exists for the receiver lifeline, add a new one
+			if (UML2!Message.allInstancesFrom('INOUT') -> select(m | m.receiveEvent <>
+					OclUndefined and m.sendEvent <> OclUndefined and m.receiveEvent.
+					covered = c08Rcv and m.sendEvent.covered = c08Snd) -> isEmpty()) {
+				
+				      -- create new elements
+				c08Msg <- thisModule.NewMessage(c08MsgName, c08Name, c08Rcv -> at(1),
+						c08Snd -> at(1), thisModule.getInteraction());
+				c08RcvEvent <- thisModule.NewMessageOccurrenceSpecification(c08MsgName.
+						concat('_Send'), c08Rcv -> at(1), c08Msg, thisModule.
+						getInteraction());
+				c08SndEvent <- thisModule.NewMessageOccurrenceSpecification(c08MsgName.
+						concat('_Receive'), c08Snd -> at(1), c08Msg, thisModule.
+						getInteraction());
+				c08Msg.receiveEvent <- c08RcvEvent;
+				c08Msg.sendEvent <- c08SndEvent;
+			} 
+		}
+	}
+}

@@ -1,0 +1,209 @@
+-- (c) Stefan Luger 2013
+-- A message between two lifelines guarantees an association between the two corresponding classes.
+-- If an association exists in the opposite direction, the right association will still be added, but the former association wont be removed.
+-- 
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+module Scenario05;
+create OUT: UML2 refining IN: UML2;
+
+-- only one model may exist per file
+helper def: classCons : Sequence(UML2!Constraint) = Sequence{};
+
+helper def: getModel(): UML2!Model =
+	UML2!Model.allInstancesFrom('INOUT').first();
+
+helper def: getReceiverLifelineClass(m: UML2!Message): UML2!Class =
+	UML2!Lifeline.allInstancesFrom('INOUT') -> select(l | l.coveredBy -> select(i | i.
+			oclIsTypeOf(UML2!MessageOccurrenceSpecification)) -> exists(e | e = m.
+			receiveEvent)) -> first().represents.type;
+
+helper def: getMessagesByClass(cl: UML2!Class): Sequence(UML2!Message) =
+	UML2!Message.allInstancesFrom('INOUT') -> select(m | thisModule.getReceiverLifelineClass(m) =
+			cl);
+
+helper def: getMessageLifelineBySendEvent(snd: UML2!MessageOccurrenceSpecification): Sequence(UML2!Lifeline) =
+	UML2!Lifeline.allInstancesFrom('INOUT')->select(ll | ll.coveredBy->exists(os | os = snd));
+
+-- new comment constructor alternative
+rule NewComment (owner: UML2!Element, cStr: String){
+	using {
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		owner.ownedComment <- Sequence{}.append(c);
+		c;	-- return operation
+	} 
+}
+
+-- new operation constructor alternative
+rule NewAssociation (aStr: String, cStr: String){
+	using {
+		a: UML2!Association = UML2!Association.newInstanceIn('INOUT');
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		a.name <- aStr -> debug('ADD association');
+		a.ownedComment <- Sequence{}.append(c);
+		a;	-- return operation
+	} 
+}
+
+-- new operation constructor alternative
+rule NewOperation (oStr: String, cStr: String){
+	using {
+		o: UML2!Operation = UML2!Operation.newInstanceIn('INOUT');
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		o.name <- oStr -> debug('ADD operation');
+		o.ownedComment <- Sequence{}.append(c);
+		o;	-- return operation
+	} 
+}
+
+-- new constraint constructor alternative
+rule NewOwnedRule (owner: UML2!Element, ruleName: String, exp: String, l: String) {
+	using {
+		c: UML2!Constraint = UML2!Constraint.newInstanceIn('INOUT');
+		oe: UML2!OpaqueExpression = UML2!OpaqueExpression.newInstanceIn('INOUT');
+	}
+	do {
+		oe.language <- oe.language -> append(l);
+		oe.body <- oe.body -> append(exp);
+		c.name <- ruleName -> debug('ADD ownedRule');
+		c.constrainedElement <- c.constrainedElement -> append(owner);
+		c.specification <- oe;
+		--owner.ownedRule <- owner.ownedRule->asSequence().append(c);
+		c;	-- return constraint
+	}
+}
+
+rule ClassOwnedAttributeAssociation (rcv: UML2!Class, snd: UML2!Class, cStr: String){
+	using {
+		p: UML2!Property = UML2!Property.newInstanceIn('INOUT')->debug('ADD association');
+		list: OclAny = OclUndefined;
+	}
+	do {
+		p.name <- rcv.name.toLower();
+		p.type <- snd;
+		p.association <- thisModule.Association(rcv, snd);
+		p.ownedComment <- p.ownedComment->append(thisModule.NewComment(p, cStr));
+		p.lowerValue <- thisModule.LiteralInteger(1);
+		p.upperValue <- thisModule.LiteralUnlimitedNatural(1);
+		p;
+	}
+}
+
+rule Association (rcv: UML2!Class, snd: UML2!Class){
+	using {
+		a: UML2!Association = UML2!Association.newInstanceIn('INOUT');
+	}
+	do {
+		a.name <- rcv.name.toLower();
+		a.ownedEnd <- Sequence{thisModule.AssociationOwnedEnd(rcv, snd)};
+		thisModule.getModel().packagedElement <- thisModule.getModel().packagedElement ->
+				append(a);
+		a;
+	}
+}
+
+rule AssociationOwnedEnd (rcv: UML2!Class, snd: UML2!Class){
+	using {
+		p: UML2!Property = UML2!Property.newInstanceIn('INOUT');
+	}
+	do {
+		p.name <- snd.name;
+		p.type <- snd;
+		p.lowerValue <- thisModule.LiteralInteger(1);
+		p.upperValue <- thisModule.LiteralUnlimitedNatural(1);
+		p;
+	}
+}
+
+rule LiteralInteger (v: Integer) {
+	using {
+		i: UML2!LiteralInteger = UML2!LiteralInteger.newInstanceIn('INOUT');
+	}
+	do {
+		i.value <- v;
+		i;
+	}
+}
+
+rule LiteralUnlimitedNatural (v: Integer) {
+	using {
+		i: UML2!LiteralUnlimitedNatural = UML2!LiteralUnlimitedNatural.newInstanceIn('INOUT');
+	}
+	do {
+		i.value <- v;
+		i;
+	}
+}
+
+rule Class {
+	from
+		s: UML2!Class
+	using {
+		c05Name: String = '';
+		c05Expr: String = '';
+		c05Elements: Sequence(UML2!Message) = thisModule.getMessagesByClass(s);
+		c05Owner: UML2!Class = s;
+		asso: UML2!Association = OclUndefined; 
+		rcvClass: UML2!Class = s;
+		sndClass: Sequence(UML2!Class) = Sequence{};
+		ll: Sequence(UML2!Lifeline) = Sequence{}; 
+		assoNav: UML2!Property = OclUndefined;
+	}
+	to
+		t: UML2!Class (
+			-- keep class properties
+		)
+	do {
+		for (m in c05Elements) {
+			ll <- thisModule.getMessageLifelineBySendEvent(m.sendEvent);
+			if (not ll->isEmpty() and not sndClass->exists(e | e = ll->first().represents.type)) {
+				sndClass <- sndClass->append(ll->first().represents.type);
+			}
+		}
+		
+		for (snd in sndClass) {
+			-- if asso doesn't exist for snd class, create it
+			if (not snd.ownedAttribute->exists(a | a.type = rcvClass)) {
+				-- if asso exists in the opposite direction
+				if (rcvClass.ownedAttribute->exists(a | a.type = snd)) {
+					assoNav <- UML2!Association.allInstancesFrom('INOUT')->select(a | a = rcvClass.ownedAttribute->select(a | a.type = snd)->at(1).association)->at(1);
+					assoNav.navigableOwnedEnd <- assoNav.ownedElement->debug('EDIT navigable <- true');
+				} else {
+					asso <- thisModule.ClassOwnedAttributeAssociation(rcvClass, snd, c05Name);
+					snd.ownedAttribute <- snd.ownedAttribute->append(asso);
+				}
+			}
+		}
+		
+		for (m in c05Elements) {
+			-- add constraint to class
+			c05Name <- 'A message ' + m.name + ' between two lifelines guarantees an association between the two corresponding classes.';
+			c05Expr <- 'let l1: Lifeline = Message.allInstances()->select(name = \'' + m.name + '\' ).receiveEvent.oclAsType(MessageOccurrenceSpecification).covered in' + 
+			' let l2: Lifeline = Message.allInstances()->select(name = \'' + m.name + '\' ).sendEvent.oclAsType(MessageOccurrenceSpecification).covered in' + 
+			' let a: Property = l2.represents.type.ownedAttribute in' +
+			' a.oclAsSequence()->notEmpty() and a.type = l1.represents.type';
+	  		if (not c05Owner -> allOwnedElements() -> select(c | c.
+			oclIsTypeOf(UML2!Constraint)) -> exists(c | c.name = c05Name) and s.oclIsTypeOf(UML2!Class)) {
+				thisModule.classCons <- thisModule.classCons->append(thisModule.NewOwnedRule(c05Owner, c05Name, c05Expr, 'OCL'));
+			}
+		}
+	}
+}
+
+endpoint rule AppendMultipleConstraints () {
+	do {
+		for (c in thisModule.classCons) {
+			c.constrainedElement->at(1).ownedRule <- c.constrainedElement->at(1).ownedRule->append(c);
+		}	
+	}
+}

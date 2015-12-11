@@ -1,0 +1,190 @@
+-- (c) Stefan Luger 2013
+-- Transforms UML2 Sequence diagram to UML2 Class diagram
+--
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+
+module Seq2Class;
+create OUT: UML2 from IN: UML2;
+
+helper def: getLifelines(): Sequence(UML2!"uml::Lifeline") =
+	UML2!"uml::Lifeline".allInstances();
+
+helper def: getConstraints(): Sequence(UML2!"uml::Constraint") =
+	UML2!"uml::Constraint".allInstances();
+
+helper def: getMessages(): Sequence(UML2!"uml::Message") =
+	UML2!"uml::Message".allInstances();
+
+-- for each message create tuple sets of lifelineSend and lifelineReceived
+helper def: getAssociations(): Sequence(OclAny) =
+	let rcv: OclAny =
+		thisModule.getReceiveLifelines()
+	in
+		let snd: OclAny =
+			thisModule.getSendLifelines()
+		in
+			rcv -> iterate(i; assSeq: Sequence(UML2!"uml::Lifeline") = Sequence {} |
+					assSeq.append(Sequence{i,
+							snd -> at(assSeq.size() + 1)}));
+
+helper def: getReceiveLifelines(): Sequence(UML2!"uml::Lifeline") =
+	thisModule.getMessages() -> collect(re | re.receiveEvent.covered).first();
+
+helper def: getSendLifelines(): Sequence(UML2!"uml::Lifeline") =
+	thisModule.getMessages() -> collect(se | se.sendEvent.covered).first();
+
+rule Model {
+	from
+		s: UML2!"uml::Model"
+	to
+		t: UML2!"uml::Model" (
+			name <- s.name,
+			ownedRule <- s.ownedRule,
+			packagedElement <- thisModule.getLifelines() -> union(thisModule.
+					getConstraints()) -> union(thisModule.getAssociations() ->
+					iterate(iter; a: Sequence(UML2!"uml::Association") = Sequence{} | a.
+					append(thisModule.Association(iter.at(1), iter.at(2)))))
+		)
+}
+
+unique lazy rule Association {
+	from rcv: UML2!"uml::Lifeline", snd: UML2!"uml::Lifeline"
+	to
+		t: UML2!"uml::Association" (
+			name <- rcv.name + '_' + snd.name,
+			--			memberEnd <-
+			ownedEnd <- Sequence{thisModule.AssociationOwnedEnd(rcv, snd)}
+		)
+	do {
+		t;	-- return generated association
+	}
+}
+
+lazy rule AssociationOwnedEnd {
+	from rcv: UML2!"uml::Lifeline", snd: UML2!"uml::Lifeline"
+	to
+		t: UML2!"uml::Property" (
+			name <- snd.name,
+			type <- snd,
+			lowerValue <- thisModule.LiteralInteger(1),
+			upperValue <- thisModule.LiteralUnlimitedNatural(1)
+		)
+	do {
+		t; 
+	}
+}
+
+lazy rule ClassOwnedAttributeAssociation {
+	from rcv: UML2!"uml::Lifeline", snd: UML2!"uml::Lifeline"
+	to
+		t: UML2!"uml::Property" (
+			name <- snd.name,
+			type <- snd,
+			association <- thisModule.Association(rcv, snd),
+			lowerValue <- thisModule.LiteralInteger(1),
+			upperValue <- thisModule.LiteralUnlimitedNatural(1)
+		)
+	do {
+		t; 
+	}
+}
+
+rule LiteralInteger (v: Integer) {
+	to
+		t: UML2!"uml::LiteralInteger" (
+			value <- v
+		)
+ do {
+		t; 
+	}
+}
+
+rule LiteralUnlimitedNatural (v: Integer) {
+	to
+		t: UML2!"uml::LiteralUnlimitedNatural" (
+			value <- v
+		)
+ do {
+		t; 
+	}
+}
+
+rule OpaqueExpression {
+	from
+		s: UML2!"uml::OpaqueExpression"
+	to
+		t: UML2!"uml::OpaqueExpression" (
+			name <- s.name,
+			visibility <- s.visibility,
+			eAnnotations <- s.eAnnotations,
+			ownedComment <- s.ownedComment,
+			clientDependency <- s.clientDependency,
+			nameExpression <- s.nameExpression,
+			body <- s.body,
+			language <- s.language,
+			behavior <- s.behavior
+		)
+}
+
+rule Message2Operation {
+	from
+		s: UML2!"uml::Message"
+	to
+		t: UML2!"uml::Operation" (
+			name <- s.name
+		)
+}
+
+rule Lifeline2Class {
+	from
+		s: UML2!"uml::Lifeline"
+	to
+		t: UML2!"uml::Class" (
+			name <- s.name,
+			visibility <- s.visibility,
+			eAnnotations <- s.eAnnotations,
+			ownedComment <- s.ownedComment,
+			clientDependency <- s.clientDependency,
+			nameExpression <- s.nameExpression,
+			ownedOperation <- thisModule.getMessages(),
+			ownedAttribute <- let assList: Sequence(OclAny) =
+					thisModule.getAssociations()
+				in
+					if assList -> isEmpty() then
+						Sequence {}
+					else
+						let a: Sequence(OclAny) =
+							assList -> select(a | if a -> at(1) = s then
+										true
+									else
+										false
+									endif)
+						in
+							if a -> isEmpty() then
+								Sequence {}
+							else
+								Sequence {}.append(thisModule.
+										ClassOwnedAttributeAssociation(a -> flatten() ->
+										at(1), a -> flatten() -> at(2)))
+							endif
+					endif
+		)
+}
+
+rule Constraint {
+	from
+		s: UML2!"uml::Constraint"
+	to
+		t: UML2!"uml::Constraint" (
+			name <- s.name,
+			visibility <- s.visibility,
+			eAnnotations <- s.eAnnotations,
+			ownedComment <- s.ownedComment,
+			clientDependency <- s.clientDependency,
+			nameExpression <- s.nameExpression,
+			constrainedElement <- s.constrainedElement,
+			specification <- s.specification
+		)
+}

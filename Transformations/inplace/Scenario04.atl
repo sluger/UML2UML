@@ -1,0 +1,164 @@
+-- (c) Stefan Luger 2013
+-- Sequence of messages must match sequence of transitions.
+--
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+
+module Scenario04;
+create OUT: UML2 refining IN: UML2;
+
+-- helpers
+
+helper def: getMessagesByClass(cl: UML2!Class): Sequence(UML2!Message) =
+	UML2!Message.allInstancesFrom('INOUT') -> select(m | thisModule.
+			getReceiverLifelineClass(m) = cl);
+
+helper def: getStatemachinesByClass(cl: UML2!Class): Sequence(UML2!StateMachine) =
+	UML2!StateMachine.allInstancesFrom('INOUT') -> select(sm | sm.owner = cl);
+
+helper def: getReceiverLifelineClass(m: UML2!Message): UML2!Class =
+	UML2!Lifeline.allInstancesFrom('INOUT') -> select(l | l.coveredBy -> select(i | i.
+			oclIsTypeOf(UML2!MessageOccurrenceSpecification)) -> exists(e | e = m.
+			receiveEvent)) -> first().represents.type;
+
+helper def: getTransitionsByClass(cl: UML2!Class): Sequence(UML2!Transitions) =
+	UML2!Transition.allInstancesFrom('INOUT') -> select(t | t.owner.owner.owner = cl);
+
+helper def: reorderTransitions(st: UML2!Vertex, sm: UML2!StateMachine, l:
+		Sequence(UML2!Transition), visited: Sequence(UML2!Vertex)):
+		Sequence(UML2!Transition) =
+	if visited -> exists(e | e = st) then
+		l -> append(UML2!Transition.allInstancesFrom('INOUT') -> select(t2 | t2.owner.
+				owner = sm and t2.source = st))
+	else
+		-- append transition to list and recursively call function for target state
+		UML2!Transition.allInstancesFrom('INOUT') -> select(t1 | t1.owner.owner = sm and
+				t1.source = st) -- for each source
+			 -> iterate(i; init: OclAny = OclUndefined | -- call recursively
+			thisModule.reorderTransitions(i.target, sm, (l -> append(UML2!Transition.
+					allInstancesFrom('INOUT') -> select(t2 | t2.owner.owner = sm and t2.
+					source = st))), visited -> append(i.source)))
+	endif;
+
+helper def: traverse(st: UML2!Vertex, i: Integer, t: Sequence(UML2!Transition), msgs:
+		Sequence(UML2!Messages), tnsns: Sequence(UML2!Transition)): Integer =
+	if msgs.at(i) = msgs -> last() and t -> exists(tr | tr.name = msgs.at(i).name) then
+		0
+	else
+		if not t -> exists(tr | tr.name = msgs.at(i).name) then
+			if t = tnsns -> at(1) then
+				thisModule.traverse(t -> select(tr | tr.source = st) -> at(1).target, i,
+						tnsns -> select(tri | t -> select(tr | tr.source = st) -> at(1).
+						target = tri -> at(1).source) -> flatten(), msgs, tnsns)
+			else
+				i
+			endif
+		else
+			thisModule.traverse(t -> select(tr | tr.name = msgs.at(i).name) -> at(1).
+					target, (i + 1), tnsns -> select(tri | tri -> exists(e | e.source =
+					(t -> select(tr | tr.name = msgs.at(i).name) -> at(1).target))) ->
+					flatten(), msgs, tnsns)
+		endif
+	endif;
+
+-- new comment constructor alternative
+rule NewComment (owner: UML2!Element, cStr: String){
+	using {
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		owner.ownedComment <- Sequence{}.append(c);
+		c;	-- return operation
+	} 
+}
+
+-- new constraint constructor alternative
+rule NewOwnedRule (owner: UML2!Element, ruleName: String, exp: String, l: String) {
+	using {
+		c: UML2!Constraint = UML2!Constraint.newInstanceIn('INOUT');
+		oe: UML2!OpaqueExpression = UML2!OpaqueExpression.newInstanceIn('INOUT');
+	}
+	do {
+		oe.language <- oe.language -> append(l);
+		oe.body <- oe.body -> append(exp);
+		c.name <- ruleName -> debug('ADD ownedRule');
+		c.constrainedElement <- c.constrainedElement -> append(owner);
+		c.specification <- oe;
+		owner.ownedRule <- owner.ownedRule -> append(c);	
+		c;	-- return constraint
+	}
+}
+
+-- for each lifeline, get sequence of messages.
+-- for each statemachine representing that lifeline, check wether order of transitions
+-- match order of messages
+rule Class {
+	from
+		s: UML2!Class (
+			s.oclIsTypeOf(UML2!Class)
+		)
+	using {
+		c04Name: String = 'Sequence of messages must match sequence of transitions.';
+		c04Expr: String = '';
+		c04Owner: UML2!Class = OclUndefined;
+		c04Messages: Sequence(UML2!Message) = thisModule.getMessagesByClass(s); --
+				-- ordered already
+	
+		c04StateMachines: Sequence(UML2!StateMachine) = thisModule.
+				getStatemachinesByClass(s);
+		c04Transitions: Sequence(UML2!Transition) = Sequence{};
+		c04Start: UML2!Vertex = OclUndefined;
+		c04ConstraintViolated: Integer = 0;
+	}
+	to
+		t: UML2!Class (
+			-- keep class properties
+		)
+	do {
+		-- reorder transitions
+		for (sm in c04StateMachines) {
+			c04Transitions <- UML2!Transition.allInstancesFrom('INOUT') -> select(t | t.
+					owner.owner = sm);
+			
+			c04Start <- let ps: Sequence(UML2!Vertex) =
+					UML2!Pseudostate.allInstancesFrom('INOUT').asSequence()
+				in
+					if ps = Sequence{} then
+						OclUndefined
+					else
+						ps -> select(st | st.owner.owner = sm) -> at(1)
+					endif; 
+			
+			     -- from initial state:
+			-- look up initial state in transitions as source -> write transition -> 
+			-- get target, repeat
+			-- until all transitions were written into the new ordered sequence of
+			-- transitions
+
+			if (not UML2!Pseudostate.allInstancesFrom('INOUT') -> isEmpty()) {
+				c04Transitions <- thisModule.reorderTransitions(c04Start, sm, Sequence{},
+						Sequence{});
+				
+				c04ConstraintViolated <- thisModule.traverse(c04Start, 1, c04Transitions
+						-> at(1), c04Messages, c04Transitions);
+				
+				c04Owner <- sm;
+			  	if (not c04Owner -> allOwnedElements() -> select(c | c.
+					oclIsTypeOf(UML2!Constraint)) -> exists(c | c.name = c04Name) and s.
+					oclIsTypeOf(UML2!Class) and s.oclIsTypeOf(UML2!Class)) {
+					thisModule.NewOwnedRule(c04Owner, c04Name, c04Expr, 'OCL');	
+			  	}
+				if (c04ConstraintViolated <> 0) {
+					             -- add comment stating violation
+					thisModule.NewComment(c04Owner, 'Constraint violated at message: '.
+							concat(c04Messages -> at(c04ConstraintViolated).name)) ->
+							debug('CONSTRAINT VIOLATED');
+				}
+				
+				c04ConstraintViolated = 0;	-- reset violation
+			}
+		}
+	}
+}

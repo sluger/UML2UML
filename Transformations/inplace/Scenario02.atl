@@ -1,0 +1,130 @@
+-- (c) Stefan Luger 2013
+-- For each lifeline, a corresponding class must exist.
+--
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+
+module Scenario02;
+create OUT: UML2 refining IN: UML2;
+
+-- helpers
+
+-- only one model may exist per file
+helper def: getModel(): UML2!Model =
+	UML2!Model.allInstancesFrom('INOUT').first();
+
+helper def: getLifelineClass(l: UML2!Lifeline): UML2!Class =
+	if (l.represents = OclUndefined) then 
+		OclUndefined
+	else  
+		if (l.represents.type = OclUndefined) then
+			OclUndefined
+		else 
+			l.represents.type
+		endif
+	endif;
+
+-- new lifeline class link property constructor
+rule NewLifelineClassLinkProperty (name: String, cl: UML2!Class, o: UML2!Collaboration) {
+	using {
+		p: UML2!Property = UML2!Property.newInstanceIn('INOUT') -> debug('ADD' + '' +
+				' property');	
+	}
+	do{
+		p.name <- name;
+		p.type <- cl;
+		o.ownedAttribute <- o.ownedAttribute -> append(p);
+		p; -- return property
+	}
+}
+
+-- new class constructor alternative
+rule NewClass (name: String, abst: Boolean) {
+	using {
+		cl: UML2!Class = UML2!Class.newInstanceIn('INOUT');	
+	}
+	do{
+		cl.name <- name;
+		cl.isAbstract <- abst;
+		thisModule.getModel().packagedElement <- thisModule.getModel().packagedElement ->
+				append(cl);
+		cl;	-- return class
+	}
+}
+
+-- new constraint constructor alternative
+rule NewOwnedRule (owner: UML2!Element, ruleName: String, exp: String, l: String) {
+	using {
+		c: UML2!Constraint = UML2!Constraint.newInstanceIn('INOUT');
+		oe: UML2!OpaqueExpression = UML2!OpaqueExpression.newInstanceIn('INOUT');
+	}
+	do {
+		oe.language <- oe.language -> append(l);
+		oe.body <- oe.body -> append(exp);
+		c.name <- ruleName -> debug('ADD ownedRule');
+		c.constrainedElement <- c.constrainedElement -> append(owner);
+		c.specification <- oe;
+		owner.ownedRule <- owner.ownedRule -> append(c);	
+		c;	-- return constraint
+	}
+}
+
+-- matched rules
+rule Lifeline {
+	from
+		s: UML2!Lifeline (
+			s.oclIsTypeOf(UML2!Lifeline)
+		)
+	using {
+		c02Name: String = 'For each lifeline, a corresponding class must exist.';
+		validLlName: String = s.name.at(1) -> toUpper() + s.name.substring(2);
+		c02Expr: String = 'Lifeline.allInstances()->select(name = \'' + validLlName +
+				'\').represents.type->notEmpty()';
+		c02Owner: UML2!Class = OclUndefined;
+		collab: UML2!Collaboration = s.owner.owner;
+	}
+	to
+		t: UML2!Lifeline (
+			-- lifeline must start with a capital character, in case of violation, change
+					-- it
+			name <- validLlName
+		) -- keep lifeline properties
+	
+	do {
+		-- add class to model
+		
+		if (thisModule.getLifelineClass(s) = OclUndefined) {
+			-- when class with the same name as the Lifeline does exist, but just isn't
+					-- linked
+			-- yet, set constraint owner
+			-- otherwise, create new class
+			if (thisModule.getModel().allOwnedElements() -> exists(cl | cl.
+					oclIsTypeOf(UML2!Class) and cl.name = s.name)) {
+				c02Owner <- thisModule.getModel().allOwnedElements() -> select(cl | cl.
+						oclIsTypeOf(UML2!Class) and cl.name = s.name) -> debug('FOUND' +
+						' class');
+			} else {
+				         -- no abstract class creation
+				c02Owner <- thisModule.NewClass(s.name, false) -> debug('ADD class');
+			}
+			
+			-- when there is no property for the represents attribute, add a new property
+			if (s.represents = OclUndefined) {
+				s.represents <- thisModule.NewLifelineClassLinkProperty(s.name.toLower(),
+						c02Owner, collab);
+			} else if (s.represents.type = OclUndefined) {
+				s.represents.type <- c02Owner;				
+			}
+		} else {
+			c02Owner <- thisModule.getLifelineClass(s);	
+		}
+		
+		-- add constraint to lifeline 
+  		if (not c02Owner -> allOwnedElements() -> select(c | c.
+		oclIsTypeOf(UML2!Constraint)) -> exists(c | c.name = c02Name) and c02Owner.
+		oclIsTypeOf(UML2!Class)) {
+			thisModule.NewOwnedRule(c02Owner, c02Name, c02Expr, 'OCL');
+		}
+	}
+}

@@ -1,0 +1,76 @@
+-- (c) Stefan Luger 2013
+-- Statemachine must be assigned to its corresponding class.
+--
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+
+module Scenario06;
+create OUT: UML2 refining IN: UML2;
+
+-- only one model may exist per file
+helper def: getModel(): UML2!Model =
+	UML2!Model.allInstancesFrom('INOUT').first();
+
+helper def: getStateMachines(): Sequence(UML2!StateMachine) =
+	UML2!StateMachine.allInstancesFrom('INOUT');
+
+helper def: getClassByStatemachine(sm: UML2!StateMachine): UML2!Class =
+	sm.owner;
+
+-- new comment constructor alternative
+rule NewComment (owner: UML2!Element, cStr: String){
+	using {
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		owner.ownedComment <- Sequence{}.append(c);
+		c;	-- return operation
+	} 
+}
+
+-- new constraint constructor alternative
+rule NewOwnedRule (owner: UML2!Element, ruleName: String, exp: String, l: String) {
+	using {
+		c: UML2!Constraint = UML2!Constraint.newInstanceIn('INOUT');
+		oe: UML2!OpaqueExpression = UML2!OpaqueExpression.newInstanceIn('INOUT');
+	}
+	do {
+		oe.language <- oe.language -> append(l);
+		oe.body <- oe.body -> append(exp);
+		c.name <- ruleName -> debug('ADD ownedRule');
+		c.constrainedElement <- c.constrainedElement -> append(owner);
+		c.specification <- oe;
+		owner.ownedRule <- owner.ownedRule -> append(c);	
+		c;	-- return constraint
+	}
+}
+
+rule StateMachine {
+	from
+		s: UML2!StateMachine
+	using {
+		c06Name: String = 'Statemachine must be assigned to its corresponding class.';
+		c06Expr: String = 'self.owner.oclIsTypeOf(Class)';
+		c06Owner: UML2!Class = s;
+		c06Elements: Sequence(UML2!Statemachine) = thisModule.getStateMachines();
+	}
+	to
+		t: UML2!StateMachine (
+			-- keep StateMachine properties
+		)
+	do {
+		-- add comment
+--		if (not s.ownedComment->exists(c | c.body = c06Name) and not
+		-- s.owner.oclIsTypeOf(UML2!Class)) {
+--			thisModule.NewComment(s, c06Name);	
+--		}
+
+		-- add constraint
+		if (not s.allOwnedElements() -> select(c | c.oclIsTypeOf(UML2!Constraint)) ->
+				exists(c | c.name = c06Name)) {	
+				thisModule.NewOwnedRule(s, c06Name, c06Expr, 'OCL');
+		}
+	}
+}

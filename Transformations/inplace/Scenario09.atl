@@ -1,0 +1,116 @@
+-- (c) Stefan Luger 2013
+-- Activity must be represented by an operation.
+--
+-- @atlcompiler emftvm
+-- @nsURI UML2=http://www.eclipse.org/uml2/4.0.0/UML
+
+
+module Scenario09;
+create OUT: UML2 refining IN: UML2;
+
+-- only one model may exist per file
+helper def: getModel(): UML2!Model =
+	UML2!Model.allInstancesFrom('INOUT').first();
+
+helper def: getActivitysByClass(cl: UML2!Class): Sequence(UML2!Activity) =
+	cl.allOwnedElements() -> select(a | a.oclIsTypeOf(UML2!Activity));
+
+-- new comment constructor alternative
+rule NewComment (owner: UML2!Element, cStr: String){
+	using {
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		owner.ownedComment <- Sequence{}.append(c);
+		c;	-- return comment
+	} 
+}
+
+-- new constraint constructor alternative
+rule NewOwnedRule (owner: UML2!Element, ruleName: String, exp: String, l: String) {
+	using {
+		c: UML2!Constraint = UML2!Constraint.newInstanceIn('INOUT');
+		oe: UML2!OpaqueExpression = UML2!OpaqueExpression.newInstanceIn('INOUT');
+	}
+	do {
+		oe.language <- oe.language -> append(l);
+		oe.body <- oe.body -> append(exp);
+		c.name <- ruleName -> debug('ADD ownedRule');
+		c.constrainedElement <- c.constrainedElement -> append(owner);
+		c.specification <- oe;
+		owner.ownedRule <- owner.ownedRule -> append(c);	
+		c;	-- return constraint
+	}
+}
+
+-- new operation constructor alternative
+rule NewOperation (oStr: String, cStr: String, owner: UML2!Class){
+	using {
+		o: UML2!Operation = UML2!Operation.newInstanceIn('INOUT');
+		c: UML2!Comment = UML2!Comment.newInstanceIn('INOUT');
+	}
+	do{
+		c.body <- cStr;
+		o.name <- oStr -> debug('ADD operation');
+		o.ownedComment <- Sequence{}.append(c);
+		o.class <- owner;
+		o;	-- return operation
+	} 
+}
+
+rule Class {
+	from
+		s: UML2!Class (
+			not s.oclIsTypeOf(UML2!Interaction) and not s.oclIsTypeOf(UML2!StateMachine)
+		)
+	using {
+		c09Name: String = 'Activity must be represented by an operation.';
+		c09Expr: String = '';
+		c09Owner: UML2!Class = s;
+		c09Elements: Sequence(UML2!Message) = OclUndefined;
+		c09Activities: Sequence(UML2!Activity) = thisModule.getActivitysByClass(s) ->
+				select(a | not s.ownedOperation -> exists(o | o.name = a.name));
+		c09Ops: Sequence(UML2!Operations) = Sequence{};
+	}
+	to
+		t: UML2!Class (
+			-- keep class properties
+		)
+	do {
+		for (m in c09Activities) {
+				-- when there is no super class, add operation to class
+				if (not s.allOwnedElements() -> exists(g | g.
+						oclIsTypeOf(UML2!Generalization))) {
+					c09Ops -> append(thisModule.NewOperation(m.name, c09Name, s)); 
+				} 
+				-- otherwise add operation to model, in case it doesn't exist yet
+				else if (UML2!Operation -> allInstancesFrom('INOUT') -> select(o | o.
+						owner = OclUndefined and o.ownedComment -> exists(oc | oc.body =
+						c09Name)) -> isEmpty()) {
+					thisModule.NewOperation(m.name, c09Name, s);
+				}
+			} -- get all messages for constraint expression
+		  c09Elements <- thisModule.getActivitysByClass(s);
+			
+		-- add constraint
+		-- for each Activity, build constraint
+		if (c09Elements -> size() > 0) {
+			c09Expr <- 'self.inheritedMember->select(oclIsTypeOf(Operation))->union(self.'
+					+ 'ownedOperation)->exists(name=\'' + c09Elements.first().name +
+					'\')';
+			
+			c09Elements <- c09Elements -> subSequence(2, c09Elements -> size());
+			for (o in c09Elements) {
+				c09Expr <- c09Expr.concat(' and self.' +
+						'inheritedMember->select(oclIsTypeOf(Operation))->union(self.'
+						+ 'ownedOperation)->exists(name=\'' + o.name + '\')');	
+			} -- add constraint to class
+			  if (not s.allOwnedElements() -> select(c | c.
+					oclIsTypeOf(UML2!Constraint)) -> exists(c | c.name = c09Name) and
+					s.oclIsTypeOf(UML2!Class)) {	
+				thisModule.NewOwnedRule(s, c09Name, c09Expr, 'OCL');
+			}
+		}
+	}
+}
